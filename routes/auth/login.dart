@@ -1,36 +1,21 @@
 // routes/auth/login.dart
 import 'dart:async';
 import 'dart:io';
-
 import 'package:dart_frog/dart_frog.dart';
-import 'package:dart_jsonwebtoken/dart_jsonwebtoken.dart';
-import 'package:dotenv/dotenv.dart';
 import 'package:e_library_backend/src/db/database.dart';
-import 'package:postgres/postgres.dart'; // Keep this import for PostgreSQLException
+import 'package:postgres/postgres.dart'; // For PgException
+import 'package:dart_jsonwebtoken/dart_jsonwebtoken.dart'; // For JWT
+import 'package:dotenv/dotenv.dart'; // For JWT secret
 
-Future<Response> onRequest(RequestContext context) async {
+FutureOr<Response> onRequest(RequestContext context) async {
   if (context.request.method != HttpMethod.post) {
     return Response.json(
       statusCode: HttpStatus.methodNotAllowed,
       body: {'message': 'Method Not Allowed'},
     );
   }
-  return _login(context);
-}
 
-Future<Response> _login(RequestContext context) async {
-  final database = context.read<AppDatabase>();
-  final env = context.read<DotEnv>();
-  final jwtSecret = env['JWT_SECRET'];
-
-  if (jwtSecret == null) {
-    return Response.json(
-      statusCode: HttpStatus.internalServerError,
-      body: {'message': 'JWT_SECRET environment variable is not configured.'},
-    );
-  }
-
-  final body = await context.request.json() as Map<String, dynamic>;
+  final body = await context.request.json();
   final username = body['username'] as String?;
   final password = body['password'] as String?;
 
@@ -39,74 +24,79 @@ Future<Response> _login(RequestContext context) async {
       statusCode: HttpStatus.badRequest,
       body: {'message': 'Username and password are required.'},
     );
-  _login(context);
   }
 
-  try {
-    // Ensure database connection is open before querying
-    await database.open(); // Important: Open the connection if not already open
+  final database = context.read<AppDatabase>();
+  final conn = database.connection;
+  final env = context.read<DotEnv>(); // Access DotEnv via context
 
-    final List<List<dynamic>> results = await database.connection.query(
-      'SELECT "Id", "Username", "PasswordHash", "IsAdmin" FROM "User" WHERE "Username" = @username;',
-      substitutionValues: {'username': username},
+  try {
+    // 1. Find user by username
+    final result = await conn.query(
+      'SELECT id, username, password_hash, is_admin FROM users WHERE username = @username',
+      variables: {'username': username},
     );
 
-    if (results.isEmpty) {
+    if (result.isEmpty) {
       return Response.json(
         statusCode: HttpStatus.unauthorized,
-        body: {'message': 'Invalid username or password.'},
+        body: {'message': 'Invalid credentials.'},
       );
     }
 
-    final userRow = results.first;
-    final int userId = userRow[0];
-    final String storedPasswordHash = userRow[2];
-    final bool isAdmin = userRow[3];
+    final userRow = result.first;
+    final storedPasswordHash = userRow[2] as String; // Assuming password_hash is at index 2
+    final userId = userRow[0] as String; // Assuming id is at index 0
+    final isAdmin = userRow[3] as bool; // Assuming is_admin is at index 3
 
-    // Assuming password hashing is done correctly elsewhere for comparison
-    // For now, directly compare. In production, use bcrypt or similar.
-    if (password != storedPasswordHash) {
+    // 2. Verify password (simple check for now, you should hash and compare securely)
+    if (password != storedPasswordHash) { // In a real app, use a strong hashing library like bcrypt
       return Response.json(
         statusCode: HttpStatus.unauthorized,
-        body: {'message': 'Invalid username or password.'},
+        body: {'message': 'Invalid credentials.'},
       );
     }
 
-    // Generate JWT
+    // 3. Generate JWT token
     final jwt = JWT(
       {
         'userId': userId,
         'username': username,
         'isAdmin': isAdmin,
       },
-      // Pass JWTHeader explicitly for issuer and audience in dart_jsonwebtoken 2.x
-      header: JWTHeader(
-        issuer: 'e-library-api',
-        audience: ['e-library-frontend'], // Audience is typically a List<String>
-      ),
     );
 
-    final token = jwt.sign(
-      SecretKey(jwtSecret),
-      expiresIn: const Duration(hours: 1),
-    );
+    // Get your JWT secret from environment variables
+    final jwtSecret = env['JWT_SECRET'];
+    if (jwtSecret == null) {
+      print('JWT_SECRET environment variable not set!');
+      return Response.json(
+        statusCode: HttpStatus.internalServerError,
+        body: {'message': 'Server configuration error.'},
+      );
+    }
+
+    final token = jwt.sign(SecretKey(jwtSecret), expiresIn: const Duration(hours: 1)); // Token expires in 1 hour
 
     return Response.json(
-      body: {'message': 'Login successful!', 'token': token},
+      body: {
+        'message': 'Login successful!',
+        'token': token,
+        'userId': userId,
+        'isAdmin': isAdmin,
+      },
     );
-  } on PostgreSQLException catch (e) {
+  } on PgException catch (e) {
     print('Database error during login: $e');
     return Response.json(
       statusCode: HttpStatus.internalServerError,
       body: {'message': 'Database error during login.'},
     );
   } catch (e) {
-    print('Error during login: $e');
+    print('Unexpected error during login: $e');
     return Response.json(
       statusCode: HttpStatus.internalServerError,
-      body: {'message': 'An unexpected error occurred during login.'},
+      body: {'message': 'An unexpected error occurred.'},
     );
-  } finally {
-    await database.close(); // Close the connection after the operation
   }
 }

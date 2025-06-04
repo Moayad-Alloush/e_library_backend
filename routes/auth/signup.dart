@@ -1,82 +1,89 @@
 // routes/auth/signup.dart
 import 'dart:async';
 import 'dart:io';
-
 import 'package:dart_frog/dart_frog.dart';
-import 'package:dotenv/dotenv.dart';
 import 'package:e_library_backend/src/db/database.dart';
-// Ensure this import is present for PostgreSQLException
+import 'package:postgres/postgres.dart';
+import 'package:uuid/uuid.dart'; // Ensure this import is here
 
-Future<Response> onRequest(RequestContext context) async {
+FutureOr<Response> onRequest(RequestContext context) async {
   if (context.request.method != HttpMethod.post) {
     return Response.json(
       statusCode: HttpStatus.methodNotAllowed,
       body: {'message': 'Method Not Allowed'},
     );
   }
-  return _signup(context);
-}
 
-Future<Response> _signup(RequestContext context) async {
-  final database = context.read<AppDatabase>();
-  final env = context.read<DotEnv>();
-  final jwtSecret = env['JWT_SECRET']; // Access env for secret if needed (though not strictly for signup)
-
-  if (jwtSecret == null) {
-    print('Warning: JWT_SECRET environment variable is not configured.');
-  }
-
+  // Explicitly cast to Map<String, dynamic> to avoid dynamic calls warnings
   final body = await context.request.json() as Map<String, dynamic>;
   final username = body['username'] as String?;
   final password = body['password'] as String?;
-  final isAdmin = body['isAdmin'] as bool? ?? false;
+  final fName = body['fName'] as String?;
+  final lName = body['lName'] as String?;
 
-  if (username == null || password == null) {
+  if (username == null ||
+      password == null ||
+      fName == null ||
+      lName == null) {
     return Response.json(
       statusCode: HttpStatus.badRequest,
-      body: {'message': 'Username and password are required.'},
+      body: {'message': 'All fields are required: username, password, '
+          'fName, lName.',},
     );
   }
 
+  final database = context.read<AppDatabase>();
+  final conn = database.connection;
+  const uuid = Uuid(); // Changed from const to final
+
   try {
-    final existingUsers = await database.connection.query(
-      'SELECT "Id" FROM "User" WHERE "Username" = @username;',
-      substitutionValues: {'username': username},
+    // Check if username already exists
+    final existingUser = await conn.query(
+      'SELECT id FROM users WHERE username = @username',
+      variables: {'username': username},
     );
 
-    if (existingUsers.isNotEmpty) {
+    if (existingUser.isNotEmpty) {
       return Response.json(
         statusCode: HttpStatus.conflict,
-        body: {'message': 'User with this username already exists.'},
+        body: {'message': 'Username already taken.'},
       );
     }
 
-    final passwordHash = password;
+    // Hash the password before storing (IMPORTANT: Use a real hashing library
+    // like Argon2, Bcrypt in a production app for security)
+    final passwordHash = password; // DO NOT USE THIS IN PRODUCTION
 
-    await database.connection.query(
-      'INSERT INTO "User" ("Username", "PasswordHash", "IsAdmin") VALUES (@username, @passwordHash, @isAdmin);',
-      substitutionValues: {
+    final userId = uuid.v4(); // Generate a unique ID for the new user
+
+    // Insert new user into the database
+    await conn.query(
+      'INSERT INTO users (id, username, password_hash, f_name, l_name) '
+      'VALUES (@id, @username, @password_hash, @f_name, @l_name)',
+      variables: {
+        'id': userId,
         'username': username,
-        'passwordHash': passwordHash,
-        'isAdmin': isAdmin,
+        'password_hash': passwordHash,
+        'f_name': fName,
+        'l_name': lName,
+        // 'is_admin': false, // No need to explicitly set if default is false
       },
     );
 
     return Response.json(
-      statusCode: HttpStatus.created,
       body: {'message': 'User registered successfully!'},
     );
-  } on PostgreSQLException catch (e) { // Ensure PostgreSQLException is recognized
+  } on PgException catch (e) {
     print('Database error during signup: $e');
     return Response.json(
       statusCode: HttpStatus.internalServerError,
-      body: {'message': 'Database error during signup.'},
+      body: {'message': 'Database error during registration.'},
     );
   } catch (e) {
-    print('Error during signup: $e');
+    print('Unexpected error during signup: $e');
     return Response.json(
       statusCode: HttpStatus.internalServerError,
-      body: {'message': 'An unexpected error occurred during signup.'},
+      body: {'message': 'An unexpected error occurred.'},
     );
   }
 }

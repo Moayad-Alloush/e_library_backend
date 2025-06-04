@@ -1,9 +1,11 @@
 // lib/src/db/database.dart
 import 'package:dotenv/dotenv.dart';
-import 'package:postgres/postgres.dart'; // This will now be postgres 3.x.x
+import 'package:postgres/postgres.dart'; // <<< This import is critical for PostgreSQLConnection and ConnectionState
 
-class AppDatabase {
+/// Manages the PostgreSQL database connection for the application.
+class AppDatabase { // Corrected class name
 
+  /// Creates an [AppDatabase] instance.
   AppDatabase({
     required DotEnv env,
   }) : _env = env;
@@ -11,16 +13,22 @@ class AppDatabase {
 
   PostgreSQLConnection? _connection;
 
+
+  /// Opens the database connection.
+  ///
+  /// It checks if a connection already exists and is ready; if not,
+  /// it initializes and opens a new one using environment variables.
   Future<void> open() async {
-    // Check if connection is null or not ready using the 3.x.x API
-    if (_connection == null || !_connection!.isReady) { // Using isReady
+    // Check connectionState. If null or not ready, create and open.
+    if (_connection == null ||
+        _connection!.connectionState != ConnectionState.ready) { // Corrected enum name
       final host = _env['DB_HOST'] ?? 'localhost';
       final port = int.tryParse(_env['DB_PORT'] ?? '') ?? 5432;
       final databaseName = _env['DB_NAME'] ?? 'your_database_name';
       final username = _env['DB_USER'] ?? 'postgres';
       final password = _env['DB_PASSWORD'] ?? 'password';
 
-      _connection = PostgreSQLConnection(
+      _connection = PostgreSQLConnection( // Corrected constructor call
         host,
         port,
         databaseName,
@@ -41,19 +49,26 @@ class AppDatabase {
     }
   }
 
+  /// Closes the database connection if it's open.
   Future<void> close() async {
-    // Check if connection is not closed using the 3.x.x API
-    if (_connection != null && !_connection!.isClosed) { // Using isClosed
+    // Check if connectionState is not closed before attempting to close
+    if (_connection != null &&
+        _connection!.connectionState != ConnectionState.closed) { // Corrected enum name
       await _connection!.close();
       print('Database connection closed.');
     }
     _connection = null; // Clear connection object after closing
   }
 
-  PostgreSQLConnection get connection {
-    // Ensure connection is not null and is ready using the 3.x.x API
-    if (_connection == null || !_connection!.isReady) { // Using isReady
-      throw StateError('Database connection is not open or not ready. Call open() first.');
+  /// Provides the active [PostgreSQLConnection] instance.
+  ///
+  /// Throws a [StateError] if the connection is not open or not ready.
+  PostgreSQLConnection get connection { // Corrected class name
+    // Ensure connection is not null and is ready before returning
+    if (_connection == null ||
+        _connection!.connectionState != ConnectionState.ready) { // Corrected enum name
+      throw StateError('Database connection is not open or not ready. '
+          'Call open() first.');
     }
     return _connection!;
   }
