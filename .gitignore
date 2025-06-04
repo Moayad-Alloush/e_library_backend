@@ -1,0 +1,25 @@
+# Dart/Flutter ignores
+.dart_tool/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+.idea/
+.vscode/
+build/ # Dart Frog might not have this, but good to include if it were Flutter
+.DS_Store # macOS
+Thumbs.db # Windows
+
+# Generated files
+*.g.dart
+*.freezed.dart
+
+# Environment variables (CRUCIAL for sensitive info)
+.env
+.env.*
+
+# Dependency caches
+.pub-cache/
+
+# IDE specific
+*.iml
+.history/
